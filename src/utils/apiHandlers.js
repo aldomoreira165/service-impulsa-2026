@@ -97,13 +97,63 @@ const parseJsonField = (value, defaultValue) => {
 const normalizarFecha = (valor) => {
     if (!valor) return null;
 
-    if (/^\d{2}\/\d{2}\/\d{4}$/.test(valor)) {
-        const [dd, mm, yyyy] = valor.split('/');
+    const texto = `${valor}`.trim().toLowerCase();
+
+    const yyyyMmDd = texto.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (yyyyMmDd) {
+        const [, yyyy, mm, dd] = yyyyMmDd;
         return `${yyyy}-${mm}-${dd}`;
     }
 
-    if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) {
-        return valor;
+    const ddMmYyyy = texto.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
+    if (ddMmYyyy) {
+        const [, dd, mm, yyyy] = ddMmYyyy;
+        return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }
+
+    const meses = {
+        ene: '01',
+        enero: '01',
+        feb: '02',
+        febrero: '02',
+        mar: '03',
+        marzo: '03',
+        abr: '04',
+        abril: '04',
+        may: '05',
+        mayo: '05',
+        jun: '06',
+        junio: '06',
+        jul: '07',
+        julio: '07',
+        ago: '08',
+        agosto: '08',
+        sep: '09',
+        sept: '09',
+        septiembre: '09',
+        oct: '10',
+        octubre: '10',
+        nov: '11',
+        noviembre: '11',
+        dic: '12',
+        diciembre: '12',
+    };
+
+    const fechaConMesTexto = texto.match(
+        /^(\d{1,2})(?:\s*[-\/]\s*|\s+de\s+|\s+)([a-záéíóúñ]+)(?:\s*[-\/]\s*|\s+de\s+|\s+)(\d{4})/
+    );
+
+    if (fechaConMesTexto) {
+        const [, dd, mesTexto, yyyy] = fechaConMesTexto;
+        const mesNormalizado = mesTexto
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+
+        const mm = meses[mesNormalizado];
+
+        if (!mm) return null;
+
+        return `${yyyy}-${mm}-${dd.padStart(2, '0')}`;
     }
 
     return null;
