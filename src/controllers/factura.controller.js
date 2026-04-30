@@ -25,6 +25,43 @@ const CONFIG_INICIAL = {
     Dimension5: null,
 };
 
+const redondear2 = (valor) => Number(Number(valor || 0).toFixed(2));
+
+const esValorVacio = (valor) => valor === undefined || valor === null || valor === '';
+
+const esRecibo = (serie) => `${serie || ''}`.trim().toUpperCase().startsWith('R_');
+
+const normalizarRespuestaFactura = (factura = {}) => {
+    const details = Array.isArray(factura.Details)
+        ? factura.Details
+        : Array.isArray(factura.DocumentLines)
+            ? factura.DocumentLines.map((item) => ({
+                ItemCode: item.ItemCode ?? null,
+                Description: item.Description ?? item.ItemDescription ?? null,
+                LineTotal: item.LineTotal ?? 0,
+                Cantidad: item.Cantidad ?? 1,
+            }))
+            : [];
+
+    const detailsNormalizados = details.map((item) => ({
+        ...item,
+        Description: item.Description ?? item.ItemDescription ?? null,
+        LineTotal: Number(item.LineTotal || 0),
+        Cantidad: Number(item.Cantidad || 1),
+    }));
+
+    const sumLineTotal = redondear2(
+        detailsNormalizados.reduce((acc, item) => acc + Number(item.LineTotal || 0), 0)
+    );
+
+    return {
+        ...factura,
+        Details: detailsNormalizados,
+        DocTotal: Number(factura.DocTotal || 0),
+        SumLineTotal: sumLineTotal,
+    };
+};
+
 const construirDetalles = ({
     details,
     dimensionesEmpresa,
@@ -125,7 +162,7 @@ async function procesarFactura(req, res) {
         let parsedJson;
 
         try {
-            parsedJson = JSON.parse(cleanedText);
+            parsedJson = normalizarRespuestaFactura(JSON.parse(cleanedText));
         } catch {
             return res.status(422).json({
                 success: false,
@@ -134,18 +171,30 @@ async function procesarFactura(req, res) {
             });
         }
 
-        if (!parsedJson?.U_DoctoSerie || !parsedJson?.U_DoctoNo) {
+        const documentoEsRecibo = esRecibo(parsedJson?.U_DoctoSerie);
+
+        if (esValorVacio(parsedJson?.U_DoctoSerie)) {
             return res.status(422).json({
                 success: false,
-                message: 'La IA no devolvió Serie y Número correctamente.',
+                message: 'La IA no devolvió Serie correctamente.',
                 data: parsedJson,
             });
         }
 
-        if (!parsedJson?.U_Nit) {
+        if (!documentoEsRecibo && esValorVacio(parsedJson?.U_DoctoNo)) {
             return res.status(422).json({
                 success: false,
-                message: 'La IA no devolvió NIT.',
+                message: 'La IA no devolvió Número correctamente.',
+                data: parsedJson,
+            });
+        }
+
+        if (esValorVacio(parsedJson?.U_Nit)) {
+            return res.status(422).json({
+                success: false,
+                message: documentoEsRecibo
+                    ? 'El recibo no contiene NIT del emisor; no se puede consultar el proveedor en DARA.'
+                    : 'La IA no devolvió NIT.',
                 data: parsedJson,
             });
         }
@@ -167,7 +216,7 @@ async function procesarFactura(req, res) {
         }
 
         const fechaNormalizada = normalizarFecha(
-            parsedJson.FechaOriginal || parsedJson.Fecha
+            parsedJson.DocDate || parsedJson.Fecha || parsedJson.FechaOriginal
         );
 
         if (!fechaNormalizada) {
@@ -183,13 +232,26 @@ async function procesarFactura(req, res) {
             0
         );
 
-        const diferencia = Math.abs(Number(parsedJson.DocTotal) - sumaDetalles);
+        const sumaDetallesRedondeada = Number(sumaDetalles.toFixed(2));
+        const docTotal = Number(Number(parsedJson.DocTotal).toFixed(2));
+        const sumLineTotalIA = Number(Number(parsedJson.SumLineTotal || sumaDetallesRedondeada).toFixed(2));
 
-        if (diferencia > 0.01) {
+        if (Math.abs(sumaDetallesRedondeada - sumLineTotalIA) > 0.01) {
+            return res.status(422).json({
+                success: false,
+                message: 'SumLineTotal no coincide con la suma real de los detalles.',
+                data: parsedJson,
+                sumaCalculadaBackend: sumaDetallesRedondeada,
+            });
+        }
+
+        if (Math.abs(docTotal - sumaDetallesRedondeada) > 0.01) {
             return res.status(422).json({
                 success: false,
                 message: 'La suma de los detalles no coincide con el total del documento.',
                 data: parsedJson,
+                sumaCalculadaBackend: sumaDetallesRedondeada,
+                docTotal,
             });
         }
 
@@ -295,6 +357,10 @@ async function procesarFactura(req, res) {
         return res.status(200).json({
             success: true,
             message: 'Factura procesada y creada en DARA correctamente.',
+            data: {
+                ...parsedJson,
+                SumLineTotal: sumaDetallesRedondeada,
+            },
         });
     } catch (error) {
         console.error('Error al procesar factura:', error);
