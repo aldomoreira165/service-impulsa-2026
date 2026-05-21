@@ -121,7 +121,7 @@ async function procesarFacturaConGemini(filePath, mimeType) {
     const base64File = fileBuffer.toString('base64');
 
     const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash-lite',
+        model: 'gemini-2.5-flash',
     });
 
     const result = await model.generateContent([
